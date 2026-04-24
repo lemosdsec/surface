@@ -34,3 +34,6 @@ dev/*
 !dev/scripts
 !dev/docker-compose-*.yml
 !dev/*.conf
+# Local-only folders (not pushed to the fork)
+/demo/
+/django/

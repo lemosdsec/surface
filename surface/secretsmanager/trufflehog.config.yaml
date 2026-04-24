@@ -1,0 +1,32 @@
+detectors:
+  - name: sensitive_keys
+    keywords:
+      - jira_password
+      - pager_duty_token
+      - slack_app_token
+      - slack_bot_token
+      - slack_signing_secret
+      - apikey
+      - accesskeyid
+      - secretaccesskey
+      - git_private_token
+      - github_token
+      - github_private_token
+      - gitlabapikey
+      - jwtkey
+      - -passphrase
+      - client_secret
+      - clientsecret
+      - secretkey
+      - authorization
+    regex:
+      general_secrets: "(?i)[\"|']{0,1}(jira_password|pager_duty_token|slack_app_token|slack_bot_token|slack_signing_secret|apikey|accesskeyid|secretaccesskey|git_private_token|github_token|github_private_token|gitlabapikey|jwtkey|-passphrase|client_secret|clientsecret|secretkey|authorization)\\b[\"|']{0,1}\\s*[:=]\\s*['\"]?(.*)['\"]?"
+
+  - name: password_finder
+    keywords:
+      - password
+      - pwd
+      - pw
+      - aes_encrypt(
+    regex:
+      passwords: "(?i)[\"|']{0,1}(?:password|pwd|pw)[\"|']{0,1}\\s*[:=]\\s*['\"]?(.*)['\"]?"

@@ -80,7 +80,7 @@ class Command(LogBaseCommand):
                     ".".join(purl.version.split(".")[:3]), optional_minor_and_patch=True
                 )
             except ValueError:
-                self.log_warning("Error processing EOL", exc_info=True)
+                # Skip EOL entries with invalid SemVer strings (e.g., "book-3", "go", etc.)
                 continue
 
             if purl_version.is_compatible(eol_version):
@@ -93,11 +93,13 @@ class Command(LogBaseCommand):
                         "finding_type": SCAFinding.FindingType.EOL,
                         "published": eol.eol,
                         "ecosystem": purl.type,
-                        "state": SCAFinding.State.CLOSED
-                        if suppressed_findings.filter(
-                            vuln_id=eol.pk, sca_project__isnull=True
-                        )  # Closed if global suppression
-                        else SCAFinding.State.NEW,
+                        "state": (
+                            SCAFinding.State.CLOSED
+                            if suppressed_findings.filter(
+                                vuln_id=eol.pk, sca_project__isnull=True
+                            )  # Closed if global suppression
+                            else SCAFinding.State.NEW
+                        ),
                         "last_seen_date": self.sync_time,
                     },
                 )
@@ -130,18 +132,20 @@ class Command(LogBaseCommand):
             dependency=pkg_obj,
             vuln_id=vuln["id"],
             defaults={
-                "application": None,  # a finding / dependency can have multiple Applications, we link to Applications through
-                # the dependency tree instead
+                # Multiple Applications per finding/dependency; link via dependency tree.
+                "application": None,
                 "published": vuln["published"],
                 "cvss_vector": cvss3[0] if cvss3 else "",
                 "finding_type": SCAFinding.FindingType.VULN,
                 "title": vuln.get("summary", "").capitalize(),
                 "summary": vuln["details"],
-                "state": SCAFinding.State.CLOSED
-                if suppressed_findings.filter(
-                    vuln_id=vuln["id"], sca_project__isnull=True
-                )  # Closed if global suppression
-                else SCAFinding.State.NEW,
+                "state": (
+                    SCAFinding.State.CLOSED
+                    if suppressed_findings.filter(
+                        vuln_id=vuln["id"], sca_project__isnull=True
+                    )  # Closed if global suppression
+                    else SCAFinding.State.NEW
+                ),
                 "aliases": ", ".join(vuln.get("aliases", [])),
                 "fixed_in": ", ".join(fixed_in) if fixed_in else "",
                 "last_seen_date": self.sync_time,

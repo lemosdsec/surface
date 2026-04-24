@@ -1,19 +1,18 @@
 import json
 import os
+import tarfile
 import tempfile
 import time
-import hvac
-import tarfile
-from docker.errors import APIError
-from pathlib import Path
 from contextlib import contextmanager
+from pathlib import Path
 
+import hvac
 from django.conf import settings
 from django.core.management.base import CommandError
-from logbasecommand.base import LogBaseCommand
+from docker.errors import APIError
 
-from scanners import models
-from scanners import utils
+from logbasecommand.base import LogBaseCommand
+from scanners import models, utils
 from scanners.inputs.base import query as input_query
 
 
@@ -77,7 +76,7 @@ class Command(LogBaseCommand):
 
         try:
             scanner = models.Scanner.objects.get(scanner_name=options['scanner'])
-        except models.Scanner.DoesNotExist as e:
+        except models.Scanner.DoesNotExist:
             raise CommandError(f'scanner {options["scanner"]} does not exist')
 
         rootbox = scanner.rootbox
@@ -126,6 +125,7 @@ class Command(LogBaseCommand):
                 self.log_warning('failed to pull image: %s', str(e))
 
             scanner_timestamp = int(time.time())
+            out_vol = f'/scanners_{settings.AVZONE}/output/' f'{scanner.id}_{scanner.image.name}/{scanner_timestamp}/'
             c = docker.containers.create(
                 f'{scanner.image.image}:{scanner.docker_tag}',
                 name=f'{cont_name}{ scanner_timestamp }',
@@ -133,7 +133,7 @@ class Command(LogBaseCommand):
                 privileged=True,
                 environment=env_vars,
                 volumes={
-                    f'/scanners_{ settings.AVZONE }/output/{ scanner.id }_{ scanner.image.name }/{ scanner_timestamp }/': {
+                    out_vol: {
                         'bind': '/output/',
                         'mode': 'rw',
                     }

@@ -3,8 +3,8 @@ from pathlib import Path
 
 from django.test import TestCase
 
-from scanners.tests import ScannerTestMixin
 from scanners import models as scanner_models
+from scanners.tests import ScannerTestMixin
 
 
 class Test(ScannerTestMixin, TestCase):

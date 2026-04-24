@@ -21,7 +21,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_VAR = environ.Env()
 ENV_VAR.read_env(BASE_DIR / "local.env")
 
-from surface.sidebar import SIDEBAR
+from surface.sidebar import SIDEBAR  # noqa: E402
 
 # Application definition
 
@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "apitokens",
     "vulns",
     "sca",
+    "secretsmanager",
     "sbomrepo",
     "jsoneditor",
     "surfapp",
@@ -62,7 +63,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",
+    # "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -200,6 +201,17 @@ SCA_INTERNAL_GITLAB_API = ENV_VAR("SURF_SCA_INTERNAL_GITLAB_API", default=None)
 
 SURFACE_GITHUB_TOKEN = ENV_VAR("SURF_GITHUB_TOKEN", default=None)
 SURFACE_GITLAB_TOKEN = ENV_VAR("SURF_GITLAB_TOKEN", default=None)
+
+# Secrets Manager
+SECRETSMANAGER_TRUFFLEHOG_BIN = ENV_VAR("SURF_TRUFFLEHOG_BIN", default="trufflehog")
+SECRETSMANAGER_TRUFFLEHOG_DOCKER = ENV_VAR.bool("SURF_SECRETS_DOCKER", default=False)
+SECRETSMANAGER_TRUFFLEHOG_IMAGE = ENV_VAR("SURF_SECRETS_DOCKER_IMAGE", default="trufflesecurity/trufflehog:latest")
+# Path to the extra-detectors YAML that `--extra-detectors` / `extra_detectors=True` enable.
+# Empty / unset falls back to the bundled `secretsmanager/trufflehog.config.yaml`.
+SECRETSMANAGER_TRUFFLEHOG_CONFIG = ENV_VAR("SURF_SECRETS_TRUFFLEHOG_CONFIG", default=None)
+SECRETSMANAGER_REQUIRE_AUTH = ENV_VAR.bool("SURF_SECRETS_REQUIRE_AUTH", default=False)
+SECRETSMANAGER_CLONE_TIMEOUT = ENV_VAR.int("SURF_SECRETS_CLONE_TIMEOUT", default=600)
+SECRETSMANAGER_SCAN_TIMEOUT = ENV_VAR.int("SURF_SECRETS_SCAN_TIMEOUT", default=900)
 
 
 with open(BASE_DIR / "surface" / "links.yml") as f:

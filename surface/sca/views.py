@@ -6,7 +6,6 @@ from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.http import require_GET
 
-
 logger = logging.getLogger(__name__)
 
 

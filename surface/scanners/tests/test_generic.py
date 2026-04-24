@@ -4,8 +4,8 @@ from unittest import mock
 from django.core import management
 from django.test import TestCase
 
-from scanners.tests import ScannerTestMixin
 from scanners import models
+from scanners.tests import ScannerTestMixin
 
 
 class Test(ScannerTestMixin, TestCase):

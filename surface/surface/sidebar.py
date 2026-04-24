@@ -172,6 +172,25 @@ SIDEBAR = {
             ],
         },
         {
+            "title": "Secrets",
+            "icon": "key",
+            "collapsible": True,
+            "items": [
+                {
+                    "title": "Secrets (All)",
+                    "icon": "vpn_key",
+                    "link": reverse_lazy("admin:secretsmanager_secret_changelist"),
+                    "permission": check_permission("secretsmanager.view_secret"),
+                },
+                {
+                    "title": "Secret Locations",
+                    "icon": "place",
+                    "link": reverse_lazy("admin:secretsmanager_secretlocation_changelist"),
+                    "permission": check_permission("secretsmanager.view_secretlocation"),
+                },
+            ],
+        },
+        {
             "title": "Secure SDLC / AppSec",
             "icon": "security",
             "collapsible": True,

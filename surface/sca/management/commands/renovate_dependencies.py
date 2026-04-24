@@ -108,10 +108,18 @@ class Command(LogBaseCommand):
             docker_temp_config_path = Path("/usr/src/app") / Path(temp_config_path).name
             _env["RENOVATE_CONFIG_FILE"] = docker_temp_config_path
             _env["LOG_LEVEL"] = "debug"
-            command = f"docker run --rm -v {Path.cwd()}:/usr/src/app -e RENOVATE_TOKEN -e RENOVATE_PLATFORM -e RENOVATE_ENDPOINT -e RENOVATE_CONFIG_FILE -e LOG_LEVEL {docker_image}"
+            command = (
+                f"docker run --rm -v {Path.cwd()}:/usr/src/app "
+                "-e RENOVATE_TOKEN -e RENOVATE_PLATFORM -e RENOVATE_ENDPOINT "
+                f"-e RENOVATE_CONFIG_FILE -e LOG_LEVEL {docker_image}"
+            )
         else:
             _env["RENOVATE_CONFIG_FILE"] = temp_config_path
-            command = f"/usr/bin/docker run --rm -v /renovate:/renovate -e RENOVATE_TOKEN -e RENOVATE_PLATFORM -e RENOVATE_ENDPOINT -e RENOVATE_CONFIG_FILE {docker_image}"
+            command = (
+                "/usr/bin/docker run --rm -v /renovate:/renovate "
+                "-e RENOVATE_TOKEN -e RENOVATE_PLATFORM -e RENOVATE_ENDPOINT "
+                f"-e RENOVATE_CONFIG_FILE {docker_image}"
+            )
 
         try:
             result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True, env=_env)

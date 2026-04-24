@@ -27,15 +27,25 @@ exclude = [
     'venv',
     'venv3',
 ]
-ignore = []
 line-length = 120
+src = ['surface', 'e2e']
+
+[tool.ruff.lint]
+ignore = []
 select = [
     'E',
     'F',
     'W',
     "I001",
 ]
-src = ['surface', 'e2e']
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 known-first-party = ["dkron", "django_restful_admin", "slackbot", "dbcleanup", "olympus", "notifications", "ppbenviron", "logbasecommand", "impersonate", "apitokens", "sbomrepo"]
+
+# Django migrations and large JSON/CVE fixtures: line length is noise; do not reformat generated blobs.
+[tool.ruff.lint.per-file-ignores]
+"surface/**/migrations/*.py" = ["E501"]
+"surface/sca/tests/data.py" = ["E501"]
+"surface/scanner_baseline/tests/test_generic.py" = ["E501"]
+"surface/secretsmanager/tests/fixtures.py" = ["E501"]
+"surface/surface/settings.py" = ["E501"]

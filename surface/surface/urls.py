@@ -21,5 +21,6 @@ urlpatterns = [
     path("dkron/", include("dkron.urls")),
     path("sbomrepo/", include("sbomrepo.urls")),
     path("sca/", include(("sca.urls", "sca"), namespace="sca")),
+    path("secretsmanager/", include(("secretsmanager.urls", "secretsmanager"), namespace="secretsmanager")),
     path("", admin.site.urls),
 ]

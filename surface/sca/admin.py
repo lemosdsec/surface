@@ -5,6 +5,7 @@ from typing import Any, Optional
 import django_filters
 from django import forms
 from django.contrib import admin, messages
+from django.core.management import call_command
 from django.db.models import Count, Q
 from django.db.models.query import QuerySet
 from django.forms.models import model_to_dict
@@ -18,7 +19,6 @@ from jsoneditor.forms import JSONEditor
 from core_utils.admin import DefaultModelAdmin, ReverseReadonlyMixin
 from core_utils.admin_filters import DefaultFilterMixin, DropdownFilter, RelatedFieldAjaxListFilter
 from core_utils.utils import admin_reverse
-from dkron.utils import run_async
 from inventory.models import GitSource
 from sca import models
 from sca.utils import only_highest_version_dependencies
@@ -369,9 +369,9 @@ class SCAProjectAdmin(DefaultModelAdmin):
 
         try:
             if dependencies:
-                run_async("renovate_dependencies", git_source.repo_url, dependencies=dependencies)
+                call_command("renovate_dependencies", git_source.repo_url, dependencies=dependencies, local=True)
             else:
-                run_async("renovate_dependencies", git_source.repo_url)
+                call_command("renovate_dependencies", git_source.repo_url, local=True)
             messages.success(
                 request,
                 f"Renovate was just called for {git_source.repo_url}. A new Merge/Pull Request will be created.",
@@ -391,7 +391,9 @@ class SCAProjectAdmin(DefaultModelAdmin):
     def get_sbom_link(self, obj):
         if obj.sbom_uuid:
             return format_html(
-                '<a href="{}" target="_blank" title="Download SBOM JSON" aria-label="Download SBOM JSON"><span class="material-symbols-outlined text-lg">download</span></a>',
+                '<a href="{}" target="_blank" title="Download SBOM JSON" '
+                'aria-label="Download SBOM JSON">'
+                '<span class="material-symbols-outlined text-lg">download</span></a>',
                 reverse("sca:download_sbom_as_json", args=[obj.sbom_uuid, obj.name]),
             )
 
@@ -423,9 +425,14 @@ class SCAProjectAdmin(DefaultModelAdmin):
             "eol": {"counter": vulns_counter.eol if vulns_counter else 0, "color": "black", "severity": "End of Life"},
         }
 
+        vuln_link = (
+            '<a target="_blank" '
+            'href="/sca/scaproject/{pk}/change/?view=vulnerabilities&severity={criticality}'
+            '&finding_type={finding_type}" '
+            'title="{counter} {severity}" class="ui {color} circular label">{counter}</a>'
+        )
         formatted_items = [
-            '<a target="_blank" href="/sca/scaproject/{pk}/change/?view=vulnerabilities&severity={criticality}&finding_type={finding_type}" '
-            'title="{counter} {severity}" class="ui {color} circular label">{counter}</a>'.format(
+            vuln_link.format(
                 pk=obj.pk,
                 counter=vuln["counter"],
                 severity=vuln["severity"],
@@ -484,6 +491,12 @@ class SCAFindingAdmin(DefaultModelAdmin):
     ]
 
     search_fields = ["vuln_id", "ecosystem", "title", "summary", "aliases"]
+    list_filter = [
+        "severity",
+        "state",
+        "finding_type",
+        ("dependency", RelatedFieldAjaxListFilter),
+    ]
     list_select_related = ["dependency"]
 
     @admin.display(description="Aliases")
