@@ -4,10 +4,11 @@ from dataclasses import dataclass
 
 import pytest
 from django.contrib.auth import get_user_model
-from scanners.models import ScannerImage
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.webdriver import WebDriver
+
+from scanners.models import ScannerImage
 
 
 @dataclass
@@ -21,9 +22,7 @@ def setup_config(username: str, password: str) -> Config:
     opts = Options()
     opts.add_argument("--incognito")
     opts.add_argument("--headless")
-    return Config(
-        username=username, password=password, driver=webdriver.Chrome(options=opts)
-    )
+    return Config(username=username, password=password, driver=webdriver.Chrome(options=opts))
 
 
 def prep_users(username: str, password: str):
@@ -49,12 +48,8 @@ def prep_scanners():
     ScannerImage.objects.update_or_create(
         name="example", defaults={"image": "ghcr.io/surface-security/scanner-example"}
     )
-    ScannerImage.objects.update_or_create(
-        name="httpx", defaults={"image": "ghcr.io/surface-security/scanner-httpx"}
-    )
-    ScannerImage.objects.update_or_create(
-        name="nmap", defaults={"image": "ghcr.io/surface-security/scanner-nmap"}
-    )
+    ScannerImage.objects.update_or_create(name="httpx", defaults={"image": "ghcr.io/surface-security/scanner-httpx"})
+    ScannerImage.objects.update_or_create(name="nmap", defaults={"image": "ghcr.io/surface-security/scanner-nmap"})
     yield
     ScannerImage.objects.filter(name__in=["example", "httpx", "nmap"]).delete()
 

@@ -22,14 +22,82 @@ from django.db import transaction
 from django.utils import timezone
 
 from inventory.models import GitSource
-from secretsmanager.models import Secret, SecretLocation, State, sha256_of
+from secretsmanager.models import CLOSED_STATES, Secret, SecretLocation, State, sha256_of
 
-# States where auto-triage is allowed to upgrade the row on re-ingest.
-# Anything outside this (TRIAGED, FIXED, FP, RA) reflects a human decision and
-# must never be overridden by a scanner run.
-_AUTO_TRIAGEABLE_STATES = frozenset({State.NEW, State.OPEN})
+# Only NEW rows can be auto-promoted by a scanner re-ingest. Anything else
+# (OPEN / FIXED / FP / RA) reflects a human decision and must never be
+# overridden by a scanner run.
+_AUTO_TRIAGEABLE_STATES = frozenset({State.NEW})
 
 logger = logging.getLogger(__name__)
+
+
+def _trufflehog_raw_is_placeholder_noise(raw: str, file_path: str = "") -> bool:
+    """Drop obvious demo / lab values so broader Trufflehog regexes stay usable.
+
+    Applied only to Trufflehog ingest — git-history uses whole-file hashing and
+    its own extension list.
+    """
+    v = (raw or "").strip()
+    if not v:
+        return True
+    vl = v.lower()
+    fp = (file_path or "").lower()
+    # Common JDBC / Spring tutorial hosts and literals.
+    markers = (
+        ".internal.example",
+        ".example.com",
+        "://localhost",
+        "127.0.0.1:5432",
+        "replace_me",
+        "your_password_here",
+        "insertpassword",
+    )
+    if any(m in vl for m in markers):
+        return True
+    if any(m in fp for m in ("/examples/", "/fixtures/")):
+        return True
+    if vl.endswith(("-demo-value", "_demo_value", "-demo", "_demo")):
+        return True
+    return False
+
+
+def _prior_location_sealed_triage(repository: str, file_path: str, commit: str, line: str) -> bool:
+    """True if this exact (repo, path, commit, line) was already FP / RA / FIXED.
+
+    Re-ingesting the same scanner hit after triage should not create a new row
+    or resurrect noise.
+    """
+    if not repository:
+        return False
+    r = strip_git_suffix(repository)
+    return SecretLocation.objects.filter(
+        repository=r,
+        file_path=file_path,
+        commit=commit,
+        line=str(line),
+        state__in=CLOSED_STATES,
+    ).exists()
+
+
+def _non_git_history_scan_already_touched_path(repository: str, file_path: str) -> bool:
+    """True if Trufflehog (or any non-git-history source) already has a row for this path.
+
+    If we already ingested line-level findings for ``file_path`` in ``repository``,
+    analysts review that file — skip redundant whole-file ``git-history-scan``
+    locations for **any** commit on the same path.
+    """
+    if not repository:
+        return False
+    r = strip_git_suffix(repository)
+    return (
+        SecretLocation.objects.filter(
+            repository=r,
+            file_path=file_path,
+        )
+        .exclude(secret__source="git-history-scan")
+        .exists()
+    )
 
 
 @dataclass
@@ -175,14 +243,25 @@ def parse_trufflehog_record(
     }
 
 
-def _upsert_secret_and_location(parsed: dict[str, Any], stats: ImportStats) -> None:
+def _upsert_secret_and_location(parsed: dict[str, Any], stats: ImportStats) -> bool:
+    """Persist one Trufflehog row. Returns False when the row was skipped."""
     repository = parsed.get("repository") or ""
+    if repository:
+        r = strip_git_suffix(repository)
+        if _prior_location_sealed_triage(r, parsed["file_path"], parsed["commit"], parsed["line"]):
+            stats.skipped += 1
+            return False
+    if _trufflehog_raw_is_placeholder_noise(parsed.get("secret") or "", parsed.get("file_path") or ""):
+        stats.skipped += 1
+        return False
+
     git_source = upsert_git_source(repository) if repository else None
 
     verified = bool(parsed.get("verified"))
-    # Verified hits start as TRIAGED; unverified hits start as NEW. This
-    # mirrors Dalek's "SECRETS: only verified secrets are auto-triaged" rule.
-    initial_state = State.TRIAGED if verified else State.NEW
+    # Verified hits skip NEW and land directly in OPEN ("valid, assigned for
+    # resolution" per `vulns.Finding.State`). Unverified hits stay in NEW
+    # until a human or a later scanner run promotes them.
+    initial_state = State.OPEN if verified else State.NEW
 
     with transaction.atomic():
         secret, created = Secret.objects.get_or_create(
@@ -215,11 +294,11 @@ def _upsert_secret_and_location(parsed: dict[str, Any], stats: ImportStats) -> N
             if parsed.get("extra_data") and not secret.extra_data:
                 secret.extra_data = parsed["extra_data"]
 
-            # Auto-triage on verification upgrade, but ONLY if the row is
-            # still in an auto-triageable state — never override a human's
-            # TRIAGED / FP / RA / FIXED decision.
+            # Promote NEW -> OPEN when the scanner cryptographically verifies
+            # a previously-unverified secret. Any other state reflects a
+            # human's verdict (OPEN / FP / RA / FIXED) and we leave it alone.
             if verified_flipped and secret.state in _AUTO_TRIAGEABLE_STATES:
-                secret.state = State.TRIAGED
+                secret.state = State.OPEN
 
             secret.save(
                 update_fields=[
@@ -236,7 +315,7 @@ def _upsert_secret_and_location(parsed: dict[str, Any], stats: ImportStats) -> N
             stats.updated_secrets += 1
 
         if not repository:
-            return
+            return True
 
         # Two-step upsert so we can auto-triage new locations without ever
         # overwriting an existing row's (possibly human-set) state.
@@ -269,8 +348,9 @@ def _upsert_secret_and_location(parsed: dict[str, Any], stats: ImportStats) -> N
             existing_loc.author = parsed["author"]
             existing_loc.timestamp = parsed["timestamp"]
             if verified and existing_loc.state in _AUTO_TRIAGEABLE_STATES:
-                existing_loc.state = State.TRIAGED
+                existing_loc.state = State.OPEN
             existing_loc.save(update_fields=["author", "timestamp", "state", "active"])
+    return True
 
 
 def ingest_trufflehog_stream(
@@ -306,8 +386,8 @@ def ingest_trufflehog_stream(
             continue
 
         try:
-            _upsert_secret_and_location(parsed, stats)
-            stats.processed += 1
+            if _upsert_secret_and_location(parsed, stats):
+                stats.processed += 1
         except Exception as exc:  # pragma: no cover - safety net
             stats.errors += 1
             stats.error_samples.append(f"db: {exc}")
@@ -316,7 +396,7 @@ def ingest_trufflehog_stream(
 
 
 # -----------------------------------------------------------------------------
-# Git-history sensitive-files scan (mirrors examples/import_git_secrets.py)
+# Git-history sensitive-files scan (used by scan_repo_secrets --path --sensitive-files / --import-git-history)
 # -----------------------------------------------------------------------------
 
 SENSITIVE_EXTENSIONS = [
@@ -419,16 +499,28 @@ def _file_content_sha(repo_path: str, commit: str, path: str) -> Optional[str]:
     return hashlib.sha256(result.stdout).hexdigest()
 
 
-def ingest_git_history(repo_path: str, org: str = "your-org") -> ImportStats:
+def ingest_git_history(
+    repo_path: str,
+    org: str = "your-org",
+    repo_url: Optional[str] = None,
+) -> ImportStats:
     """Scan a git repo checkout for known-sensitive filenames and record them.
 
     One `Secret` per unique file content (keyed by its sha256); one
     `SecretLocation` per (commit, path) it appeared in.
+
+    `repo_url`, when provided, takes precedence over the `org` + path-derived
+    URL. The unified `scan_repo(..., sensitive_files=True)` flow uses this so
+    every row gets stamped with the canonical repo URL the caller already
+    knows, rather than a guess derived from a tempdir name.
     """
     stats = ImportStats()
 
-    repo_name = os.path.basename(os.path.normpath(repo_path))
-    repo_url = f"https://github.com/{org}/{repo_name}"
+    if repo_url:
+        repo_url = strip_git_suffix(repo_url.strip())
+    else:
+        repo_name = os.path.basename(os.path.normpath(repo_path))
+        repo_url = f"https://github.com/{org}/{repo_name}"
     default_branch = _detect_default_branch(repo_path)
     git_source = upsert_git_source(repo_url, branch=default_branch)
 
@@ -443,6 +535,15 @@ def ingest_git_history(repo_path: str, org: str = "your-org") -> ImportStats:
         bucket["locations"].append(entry)
 
     for content_hash, data in by_hash.items():
+        kept: list[dict[str, str]] = []
+        for entry in data["locations"]:
+            if _non_git_history_scan_already_touched_path(repo_url, entry["file"]):
+                stats.skipped += 1
+                continue
+            kept.append(entry)
+        if not kept:
+            continue
+
         kind = f"SensitiveFile ({data['extension']})"
         with transaction.atomic():
             secret, created = Secret.objects.get_or_create(
@@ -463,7 +564,7 @@ def ingest_git_history(repo_path: str, org: str = "your-org") -> ImportStats:
                 secret.save(update_fields=["last_seen"])
                 stats.updated_secrets += 1
 
-            for entry in data["locations"]:
+            for entry in kept:
                 ts = entry.get("date") or ""
                 try:
                     parsed_ts = datetime.fromisoformat(ts) if ts else timezone.now()
@@ -487,6 +588,6 @@ def ingest_git_history(repo_path: str, org: str = "your-org") -> ImportStats:
                 )
                 if loc_created:
                     stats.new_locations += 1
-        stats.processed += len(data["locations"])
+        stats.processed += len(kept)
 
     return stats

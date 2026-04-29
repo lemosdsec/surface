@@ -19,8 +19,8 @@ HTTP upload.
 | Surface | When to use |
 | ------- | ----------- |
 | `python manage.py scan_repo_secrets --repo <url>` | Demo-style clone → scan → import → delete loop. |
+| `python manage.py scan_repo_secrets --path <dir> …` | Scan an existing clone (`--sensitive-files`, `--import-git-history`, `--org`, …). |
 | `python manage.py import_secrets <file.ndjson>` | You already have TruffleHog output on disk. |
-| `python manage.py import_git_secrets <repo_path>` | Scan a local git checkout for known-sensitive filenames. |
 | `POST /secretsmanager/v1/trufflehog` (`file=@…`) | Upload a TruffleHog NDJSON via `curl`. |
 | `POST /secretsmanager/v1/scan` (JSON `{repo, branch}`) | Trigger a server-side clone+scan+import. |
 
@@ -46,7 +46,6 @@ secretsmanager/
   management/commands/
     scan_repo_secrets.py
     import_secrets.py
-    import_git_secrets.py
   tests/
     fixtures.py
     test_import_trufflehog.py

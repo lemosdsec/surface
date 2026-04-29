@@ -5,7 +5,7 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
 from core_utils.admin import DefaultModelAdmin
-from secretsmanager.models import Secret, SecretLocation, State
+from secretsmanager.models import Secret, SecretFinding, SecretLocation, State
 
 
 class ActiveFilter(admin.SimpleListFilter):
@@ -309,3 +309,45 @@ class SecretLocationAdmin(DefaultModelAdmin):
             obj.blob_url,
             obj.commit[:8],
         )
+
+
+@admin.register(SecretFinding)
+class SecretFindingAdmin(DefaultModelAdmin):
+    """Read-mostly admin for the per-location Finding rows.
+
+    The `state` field is the one column users edit by hand here — everything
+    else is derived from the linked `SecretLocation` and gets refreshed by
+    `SecretLocation._sync_finding()` every time the location is saved.
+    """
+
+    list_display = [
+        "id",
+        "title",
+        "severity",
+        "state",
+        "secret_location_link",
+        "first_seen",
+        "last_seen_date",
+    ]
+    list_filter = ["severity", "state", "secret_location__secret__source", "secret_location__secret__verified"]
+    search_fields = [
+        "title",
+        "summary",
+        "secret_location__file_path",
+        "secret_location__repository",
+        "secret_location__secret__secret_hash",
+    ]
+    readonly_fields = ["title", "summary", "secret_location", "first_seen", "last_seen_date"]
+    fields = ["title", "summary", "severity", "state", "secret_location", "first_seen", "last_seen_date"]
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("secret_location__secret")
+
+    @admin.display(description="Secret Location", ordering="secret_location__file_path")
+    def secret_location_link(self, obj: SecretFinding) -> str:
+        loc = obj.secret_location
+        if loc is None:
+            return "-"
+        url = reverse("admin:secretsmanager_secretlocation_change", args=[loc.pk])
+        label = f"{loc.file_path}:{loc.line}"
+        return format_html('<a href="{}">{}</a>', url, label)

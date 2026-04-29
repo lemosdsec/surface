@@ -1,27 +1,45 @@
+from django.core.management.base import CommandError
+
 from logbasecommand.base import LogBaseCommand
 from secretsmanager.scanner import scan_repo
 
 
 class Command(LogBaseCommand):
-    help = "Clone a repo, run trufflehog against it, import results, then delete the clone."
+    help = (
+        "Clone a remote repo (or scan an existing checkout on disk), run trufflehog, "
+        "import results, then delete only temporary clones."
+    )
 
     def add_arguments(self, parser):
-        parser.add_argument("--repo", required=True, help="Repository URL to clone and scan")
-        parser.add_argument("--branch", default=None, help="Branch to clone (defaults to repo default)")
+        group = parser.add_mutually_exclusive_group(required=True)
+        group.add_argument("--repo", help="Repository URL to clone and scan")
+        group.add_argument(
+            "--path",
+            metavar="DIR",
+            dest="local_path",
+            help=(
+                "Path to an existing git working tree — trufflehog runs as "
+                "`trufflehog git file:///DIR` (same idea as the upstream docs). "
+                "The directory is scanned in place and is never deleted."
+            ),
+        )
+        parser.add_argument(
+            "--branch", default=None, help="Branch to clone (defaults to repo default); ignored with --path"
+        )
         parser.add_argument(
             "--full",
             action="store_true",
-            help="Clone the full history instead of a shallow clone (slower)",
+            help="Clone the full history instead of a shallow clone (slower); ignored with --path",
         )
         parser.add_argument(
             "--keep",
             action="store_true",
-            help="Do NOT delete the temporary clone directory after scanning (debug)",
+            help="Do NOT delete the temporary clone directory after scanning (debug); ignored with --path",
         )
         parser.add_argument(
             "--only-verified",
             action="store_true",
-            help="Only record secrets that trufflehog was able to verify (`--only-verified`)",
+            help="Only record secrets trufflehog was able to verify (`trufflehog --only-verified`)",
         )
         parser.add_argument(
             "--extra-detectors",
@@ -34,23 +52,64 @@ class Command(LogBaseCommand):
             default=None,
             help="Path to a custom trufflehog YAML config; overrides the bundled one",
         )
+        parser.add_argument(
+            "--sensitive-files",
+            action="store_true",
+            help=(
+                "After trufflehog, also walk git history for known-sensitive filenames "
+                "(.env, .pem, .keystore, …). Forces a full clone when cloning from --repo."
+            ),
+        )
+        parser.add_argument(
+            "--org",
+            default=None,
+            help=(
+                "For --path: when the checkout has no 'origin' remote, label the git-history import "
+                "as https://github.com/<org>/<directory>. "
+                "Ignored when origin exists. Use with --sensitive-files or --import-git-history."
+            ),
+        )
+        parser.add_argument(
+            "--import-git-history",
+            action="store_true",
+            dest="history_only",
+            help=(
+                "Skip trufflehog; only run the git-history sensitive-filename import. "
+                "Requires --path. Combine with --org when there is no origin."
+            ),
+        )
 
     def handle(self, *args, **options):
+        if options["history_only"] and not options.get("local_path"):
+            raise CommandError("--import-git-history requires --path")
         result = scan_repo(
-            repo=options["repo"],
+            repo=options.get("repo"),
+            local_path=options.get("local_path"),
             branch=options["branch"],
             shallow=not options["full"],
             keep=options["keep"],
             only_verified=options["only_verified"],
             extra_detectors=options["extra_detectors"],
             config_path=options["config_path"],
+            sensitive_files=options["sensitive_files"],
+            org=options["org"],
+            history_only=options["history_only"],
         )
         stats = result.stats
+        if result.local_path:
+            extra = f" (in-place at {result.workdir})"
+        elif result.kept:
+            extra = f" (clone kept at {result.workdir})"
+        else:
+            extra = ""
+        target = result.local_path or result.repo
         self.log(
-            "scan complete for %s (only_verified=%s, config=%s): "
+            "scan complete for %s (only_verified=%s, sensitive_files=%s, import_git_history_only=%s, config=%s): "
             "processed=%s new_secrets=%s updated_secrets=%s new_locations=%s skipped=%s errors=%s%s",
-            result.repo,
+            target,
             result.only_verified,
+            result.sensitive_files,
+            result.history_only,
             result.config_path or "—",
             stats.processed,
             stats.new_secrets,
@@ -58,5 +117,5 @@ class Command(LogBaseCommand):
             stats.new_locations,
             stats.skipped,
             stats.errors,
-            f" (clone kept at {result.workdir})" if result.kept else "",
+            extra,
         )

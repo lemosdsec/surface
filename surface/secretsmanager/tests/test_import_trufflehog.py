@@ -1,4 +1,5 @@
 import json
+from unittest import mock
 
 from django.test import TestCase
 
@@ -6,6 +7,7 @@ from inventory.models import GitSource
 from secretsmanager.models import Secret, SecretLocation
 from secretsmanager.tests.fixtures import TRUFFLEHOG_LINES
 from secretsmanager.utils import (
+    ingest_git_history,
     ingest_trufflehog_stream,
     normalise_author,
     parse_trufflehog_record,
@@ -164,17 +166,17 @@ class IngestPipelineTests(TestCase):
         # Fixture line 3 is verified=true
         self.assertTrue(Secret.objects.filter(verified=True).exists())
 
-    def test_verified_secret_is_auto_triaged_on_create(self):
+    def test_verified_secret_lands_in_open_on_create(self):
         from secretsmanager.models import State
 
         ingest_trufflehog_stream(TRUFFLEHOG_LINES)
 
         verified = Secret.objects.filter(verified=True).first()
         self.assertIsNotNone(verified)
-        self.assertEqual(verified.state, State.TRIAGED)
+        self.assertEqual(verified.state, State.OPEN)
         self.assertTrue(verified.active)
-        # All locations for a verified secret start TRIAGED too.
-        self.assertTrue(all(loc.state == State.TRIAGED for loc in verified.locations.all()))
+        # All locations for a verified secret start OPEN too.
+        self.assertTrue(all(loc.state == State.OPEN for loc in verified.locations.all()))
 
         unverified = Secret.objects.filter(verified=False).first()
         self.assertIsNotNone(unverified)
@@ -200,7 +202,7 @@ class IngestPipelineTests(TestCase):
         self.assertEqual(unverified.state, State.FALSE_POSITIVE)
         self.assertFalse(unverified.active)
 
-    def test_verification_upgrade_bumps_new_to_triaged(self):
+    def test_verification_upgrade_bumps_new_to_open(self):
         import json
 
         from secretsmanager.models import State
@@ -219,4 +221,59 @@ class IngestPipelineTests(TestCase):
 
         created.refresh_from_db()
         self.assertTrue(created.verified)
-        self.assertEqual(created.state, State.TRIAGED)
+        self.assertEqual(created.state, State.OPEN)
+
+    def test_ingest_skips_placeholder_demo_values(self):
+        record = {
+            "SourceMetadata": {
+                "Data": {
+                    "Git": {
+                        "commit": "a" * 40,
+                        "file": "application.properties",
+                        "email": "x <x@y.z>",
+                        "repository": "https://github.com/example/repo",
+                        "timestamp": "2024-11-05 10:52:35 +0000",
+                        "line": 2,
+                    }
+                }
+            },
+            "SourceName": "trufflehog - git",
+            "DetectorName": "jdbc_url",
+            "Verified": False,
+            "Raw": "jdbc:postgresql://db.internal.example:5432/app",
+        }
+        stats = ingest_trufflehog_stream([json.dumps(record)])
+        self.assertEqual(stats.skipped, 1)
+        self.assertEqual(stats.processed, 0)
+        self.assertEqual(Secret.objects.count(), 0)
+
+    def test_ingest_skips_when_location_was_triaged_closed(self):
+        from secretsmanager.models import State
+
+        ingest_trufflehog_stream([TRUFFLEHOG_LINES[0]])
+        loc = SecretLocation.objects.get()
+        loc.state = State.FALSE_POSITIVE
+        loc.save()
+
+        stats = ingest_trufflehog_stream([TRUFFLEHOG_LINES[0]])
+        self.assertEqual(stats.skipped, 1)
+        self.assertEqual(SecretLocation.objects.count(), 1)
+
+    @mock.patch("secretsmanager.utils._file_content_sha", return_value="deadbeef" * 8)
+    @mock.patch("secretsmanager.utils._iter_sensitive_files")
+    def test_git_history_skips_when_trufflehog_touched_same_path(self, mock_iter, _mock_sha):
+        """No redundant SensitiveFile row when Trufflehog already touched this path (any commit)."""
+        ingest_trufflehog_stream([TRUFFLEHOG_LINES[0]])
+        loc = SecretLocation.objects.get()
+
+        mock_iter.return_value = [
+            {
+                "commit": "b" * 40,
+                "file": loc.file_path,
+                "author": "t@t.t",
+                "date": "2024-01-01T00:00:00+00:00",
+            }
+        ]
+        stats = ingest_git_history("/tmp/fake", repo_url=loc.repository)
+        self.assertEqual(stats.skipped, 1)
+        self.assertFalse(Secret.objects.filter(source="git-history-scan").exists())

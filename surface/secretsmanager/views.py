@@ -22,7 +22,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from secretsmanager.models import Secret
-from secretsmanager.scanner import scan_repo
+from secretsmanager.scanner import scan_repo, validate_local_scan_path_for_api
 from secretsmanager.utils import ingest_trufflehog_stream
 
 logger = logging.getLogger(__name__)
@@ -97,10 +97,7 @@ def upload_trufflehog(request: HttpRequest) -> JsonResponse:
 @csrf_exempt
 @require_http_methods(["POST"])
 def scan(request: HttpRequest) -> JsonResponse:
-    """Trigger a synchronous clone + trufflehog scan for a repo URL.
-
-    JSON body: `{"repo": "...", "branch": "...", "full": false, "keep": false}`.
-    """
+    """Run trufflehog: clone ``repo`` or scan an on-disk tree via ``path``."""
     auth_error = _check_auth(request)
     if auth_error is not None:
         return auth_error
@@ -110,41 +107,74 @@ def scan(request: HttpRequest) -> JsonResponse:
     except json.JSONDecodeError as exc:
         return JsonResponse({"error": f"Invalid JSON body: {exc}"}, status=400)
 
-    repo = body.get("repo")
-    if not repo:
-        return JsonResponse({"error": "`repo` is required"}, status=400)
+    repo = (body.get("repo") or "").strip()
+    raw_local = body.get("path") or body.get("local_path") or ""
+    local_path = raw_local.strip() if isinstance(raw_local, str) else ""
 
+    if repo and local_path:
+        return JsonResponse({"error": "Specify only one of `repo` or `path`, not both"}, status=400)
+    if not repo and not local_path:
+        return JsonResponse({"error": "Provide `repo` (URL to clone) or `path` (local checkout)"}, status=400)
+
+    scan_kwargs = dict(
+        branch=body.get("branch"),
+        shallow=not bool(body.get("full")),
+        keep=bool(body.get("keep")),
+        only_verified=bool(body.get("only_verified")),
+        extra_detectors=bool(body.get("extra_detectors")),
+        config_path=body.get("config") or None,
+        sensitive_files=bool(body.get("sensitive_files")),
+        org=(body.get("org") or "").strip() or None,
+        history_only=bool(body.get("history_only") or body.get("import_git_history")),
+    )
+
+    label = repo or local_path or "(unknown)"
     try:
-        result = scan_repo(
-            repo=repo,
-            branch=body.get("branch"),
-            shallow=not bool(body.get("full")),
-            keep=bool(body.get("keep")),
-            only_verified=bool(body.get("only_verified")),
-            extra_detectors=bool(body.get("extra_detectors")),
-            config_path=body.get("config") or None,
-        )
+        if local_path:
+            jail = getattr(settings, "SECRETSMANAGER_LOCAL_SCAN_ROOT", None)
+            if not jail:
+                return JsonResponse(
+                    {
+                        "error": "Local `path` scans are disabled. "
+                        "Set SECRETSMANAGER_LOCAL_SCAN_ROOT (env SURF_SECRETS_LOCAL_SCAN_ROOT) "
+                        "to a directory prefix, or use `manage.py scan_repo_secrets --path` on the host.",
+                    },
+                    status=400,
+                )
+            try:
+                validated_path = validate_local_scan_path_for_api(local_path, jail)
+            except ValueError as exc:
+                return JsonResponse({"error": str(exc)}, status=400)
+
+            result = scan_repo(local_path=validated_path, **scan_kwargs)
+        else:
+            result = scan_repo(repo=repo, **scan_kwargs)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
     except FileNotFoundError as exc:
         return JsonResponse({"status": "error", "error": str(exc)}, status=400)
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
-        logger.exception("scan_repo failed for %s", repo)
+        logger.exception("scan_repo failed for %s", label)
         return JsonResponse({"status": "error", "error": str(exc), "stderr": stderr[:2000]}, status=502)
     except subprocess.TimeoutExpired as exc:
-        logger.exception("scan_repo timed out for %s", repo)
+        logger.exception("scan_repo timed out for %s", label)
         return JsonResponse({"status": "error", "error": f"Timeout: {exc}"}, status=504)
 
-    return JsonResponse(
-        {
-            "status": "ok",
-            "repo": result.repo,
-            "branch": result.branch,
-            "kept": result.kept,
-            "only_verified": result.only_verified,
-            "config": result.config_path,
-            "stats": result.stats.as_dict(),
-        }
-    )
+    payload = {
+        "status": "ok",
+        "repo": result.repo,
+        "branch": result.branch,
+        "kept": result.kept,
+        "only_verified": result.only_verified,
+        "sensitive_files": result.sensitive_files,
+        "history_only": result.history_only,
+        "config": result.config_path,
+        "stats": result.stats.as_dict(),
+    }
+    if result.local_path is not None:
+        payload["local_path"] = result.local_path
+    return JsonResponse(payload)
 
 
 _DEFAULT_LIMIT = 50
@@ -164,9 +194,7 @@ def list_secrets(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "`limit` must be an integer"}, status=400)
 
     qs = (
-        Secret.objects.select_related("git_source")
-        .annotate(_locations_count=Count("locations"))
-        .order_by("-last_seen")
+        Secret.objects.select_related("git_source").annotate(_locations_count=Count("locations")).order_by("-last_seen")
     )
     repo = request.GET.get("repo")
     if repo:

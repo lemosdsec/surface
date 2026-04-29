@@ -1,5 +1,4 @@
 from django.contrib.contenttypes import models as ct_models
-from django.core import checks
 from django.db import models
 
 
@@ -77,24 +76,6 @@ class Finding(models.Model):
     @classmethod
     def content_type(cls):
         return ct_models.ContentType.objects.get_for_model(cls)
-
-    @classmethod
-    def check(cls, **kwargs):
-        errors = super().check(**kwargs)
-        errors.extend(
-            [
-                checks.Warning(
-                    'deprecated model',
-                    hint=(
-                        'Deprecation Warning: Migrate inventory.Finding data to vuln.Finding instead. '
-                        'inventory.Finding will be decommissioned in Surface 2.0'
-                    ),
-                    obj=cls,
-                    id='inventory.W001',
-                )
-            ]
-        )
-        return errors
 
     @property
     def cached_content_source(self):

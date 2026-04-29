@@ -212,6 +212,10 @@ SECRETSMANAGER_TRUFFLEHOG_CONFIG = ENV_VAR("SURF_SECRETS_TRUFFLEHOG_CONFIG", def
 SECRETSMANAGER_REQUIRE_AUTH = ENV_VAR.bool("SURF_SECRETS_REQUIRE_AUTH", default=False)
 SECRETSMANAGER_CLONE_TIMEOUT = ENV_VAR.int("SURF_SECRETS_CLONE_TIMEOUT", default=600)
 SECRETSMANAGER_SCAN_TIMEOUT = ENV_VAR.int("SURF_SECRETS_SCAN_TIMEOUT", default=900)
+# When set, `POST …/v1/scan` may include `"path": "/abs/path/to/checkout"` and it must
+# resolve under this directory. Unset → API local-path scans are rejected (use
+# `manage.py scan_repo_secrets --path` on the host instead).
+SECRETSMANAGER_LOCAL_SCAN_ROOT = ENV_VAR("SURF_SECRETS_LOCAL_SCAN_ROOT", default=None)
 
 
 with open(BASE_DIR / "surface" / "links.yml") as f:

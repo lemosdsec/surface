@@ -72,9 +72,7 @@ class BulkActionsTests(TestCase):
 
     def test_mark_fp_on_single_location_closes_parent_secret(self):
         admin_instance = SecretLocationAdmin(SecretLocation, AdminSite())
-        admin_module.mark_false_positive(
-            admin_instance, _request(), SecretLocation.objects.filter(pk=self.loc.pk)
-        )
+        admin_module.mark_false_positive(admin_instance, _request(), SecretLocation.objects.filter(pk=self.loc.pk))
 
         self.loc.refresh_from_db()
         self.secret_a.refresh_from_db()
@@ -86,16 +84,12 @@ class BulkActionsTests(TestCase):
     def test_mark_risk_accepted_and_fixed_work(self):
         admin_instance = SecretAdmin(Secret, AdminSite())
 
-        admin_module.mark_risk_accepted(
-            admin_instance, _request(), Secret.objects.filter(pk=self.secret_a.pk)
-        )
+        admin_module.mark_risk_accepted(admin_instance, _request(), Secret.objects.filter(pk=self.secret_a.pk))
         self.secret_a.refresh_from_db()
         self.assertEqual(self.secret_a.state, State.RISK_ACCEPTED)
         self.assertFalse(self.secret_a.active)
 
-        admin_module.mark_fixed(
-            admin_instance, _request(), Secret.objects.filter(pk=self.secret_b.pk)
-        )
+        admin_module.mark_fixed(admin_instance, _request(), Secret.objects.filter(pk=self.secret_b.pk))
         self.secret_b.refresh_from_db()
         self.assertEqual(self.secret_b.state, State.FIXED)
         self.assertFalse(self.secret_b.active)
@@ -109,7 +103,7 @@ class ListSecretsEndpointTests(TestCase):
             secret="abcd",
             secret_hash="c" * 64,
             source="trufflehog - git",
-            state=State.TRIAGED,
+            state=State.OPEN,
             verified=True,
         )
         SecretLocation.objects.create(
@@ -118,7 +112,7 @@ class ListSecretsEndpointTests(TestCase):
             file_path="src/a.py",
             commit="a" * 40,
             line="1",
-            state=State.TRIAGED,
+            state=State.OPEN,
         )
         SecretLocation.objects.create(
             secret=self.secret,
@@ -126,7 +120,7 @@ class ListSecretsEndpointTests(TestCase):
             file_path="src/b.py",
             commit="a" * 40,
             line="2",
-            state=State.TRIAGED,
+            state=State.OPEN,
         )
 
     def test_list_secrets_returns_stats(self):
@@ -138,7 +132,7 @@ class ListSecretsEndpointTests(TestCase):
         row = body["secrets"][0]
         self.assertEqual(row["secret_hash"], "c" * 64)
         self.assertEqual(row["locations"], 2)
-        self.assertEqual(row["state"], "Triaged")
+        self.assertEqual(row["state"], "Open")
         self.assertTrue(row["active"])
 
     def test_list_secrets_rejects_non_integer_limit(self):
@@ -153,6 +147,148 @@ class ListSecretsEndpointTests(TestCase):
         response = self.client.get(self.url, {"source": "not-a-real-source"})
         body = response.json()
         self.assertEqual(body["count"], 0)
+
+
+class GitSourceScanActionTests(TestCase):
+    """Smoke tests for the admin actions injected onto `inventory.GitSourceAdmin`."""
+
+    def setUp(self):
+        from inventory.models import GitSource
+
+        self.gs = GitSource.objects.create(
+            repo_url="https://github.com/example/repo",
+            branch="main",
+            active=True,
+        )
+        self.gs2 = GitSource.objects.create(
+            repo_url="https://github.com/example/other",
+            branch="main",
+            active=True,
+        )
+
+    def _fake_result(self, processed=3, new_secrets=2, new_locations=3):
+        result = mock.Mock()
+        result.stats.processed = processed
+        result.stats.new_secrets = new_secrets
+        result.stats.new_locations = new_locations
+        return result
+
+    def test_default_action_calls_scan_repo_without_flags(self):
+        from inventory.models import GitSource
+        from secretsmanager.admin_integrations import scan_default
+
+        with mock.patch(
+            "secretsmanager.admin_integrations.scan_repo",
+            return_value=self._fake_result(),
+        ) as mocked:
+            scan_default(None, _request(), GitSource.objects.filter(pk=self.gs.pk))
+
+        mocked.assert_called_once()
+        kwargs = mocked.call_args.kwargs
+        self.assertEqual(kwargs["repo"], self.gs.repo_url)
+        # gs.branch=="main" (custom, not the model default "master") → forwarded.
+        self.assertEqual(kwargs["branch"], "main")
+        self.assertFalse(kwargs["only_verified"])
+        self.assertFalse(kwargs["extra_detectors"])
+
+    def test_default_branch_placeholder_is_treated_as_no_branch(self):
+        """If GitSource.branch == model default ("master"), pass branch=None
+        so git uses the repo's actual default (mirrors CLI behaviour)."""
+        from inventory.models import GitSource
+        from secretsmanager.admin_integrations import scan_default
+
+        master_gs = GitSource.objects.create(
+            repo_url="https://github.com/trufflesecurity/test_keys",
+            branch="master",  # i.e. the placeholder default
+        )
+        with mock.patch(
+            "secretsmanager.admin_integrations.scan_repo",
+            return_value=self._fake_result(),
+        ) as mocked:
+            scan_default(None, _request(), GitSource.objects.filter(pk=master_gs.pk))
+
+        self.assertIsNone(mocked.call_args.kwargs["branch"])
+
+    def test_only_verified_action_sets_flag(self):
+        from inventory.models import GitSource
+        from secretsmanager.admin_integrations import scan_only_verified
+
+        with mock.patch(
+            "secretsmanager.admin_integrations.scan_repo",
+            return_value=self._fake_result(),
+        ) as mocked:
+            scan_only_verified(None, _request(), GitSource.objects.filter(pk=self.gs.pk))
+
+        self.assertTrue(mocked.call_args.kwargs["only_verified"])
+
+    def test_extra_detectors_action_sets_flag(self):
+        from inventory.models import GitSource
+        from secretsmanager.admin_integrations import scan_with_extra_detectors
+
+        with mock.patch(
+            "secretsmanager.admin_integrations.scan_repo",
+            return_value=self._fake_result(),
+        ) as mocked:
+            scan_with_extra_detectors(None, _request(), GitSource.objects.filter(pk=self.gs.pk))
+
+        self.assertTrue(mocked.call_args.kwargs["extra_detectors"])
+
+    def test_batch_cap_blocks_too_many(self):
+        from inventory.models import GitSource
+        from secretsmanager.admin_integrations import MAX_BATCH, scan_default
+
+        # Create enough rows to exceed the cap.
+        for i in range(MAX_BATCH + 2):
+            GitSource.objects.create(repo_url=f"https://github.com/x/r{i}", branch="main")
+
+        with mock.patch("secretsmanager.admin_integrations.scan_repo") as mocked:
+            scan_default(None, _request(), GitSource.objects.all())
+
+        mocked.assert_not_called()
+
+    def test_per_repo_errors_do_not_abort_batch(self):
+        from inventory.models import GitSource
+        from secretsmanager.admin_integrations import scan_default
+
+        call_count = {"n": 0}
+
+        def side_effect(**kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("clone boom")
+            return self._fake_result()
+
+        with mock.patch("secretsmanager.admin_integrations.scan_repo", side_effect=side_effect):
+            scan_default(
+                None,
+                _request(),
+                GitSource.objects.filter(pk__in=[self.gs.pk, self.gs2.pk]),
+            )
+
+        # Both repos were attempted (one failed, one succeeded).
+        self.assertEqual(call_count["n"], 2)
+
+    def test_gitsource_missing_repo_url_is_reported(self):
+        from inventory.models import GitSource
+        from secretsmanager.admin_integrations import scan_default
+
+        broken = GitSource.objects.create(repo_url="", branch="main")
+        with mock.patch("secretsmanager.admin_integrations.scan_repo") as mocked:
+            scan_default(None, _request(), GitSource.objects.filter(pk=broken.pk))
+
+        mocked.assert_not_called()
+
+    def test_actions_are_registered_on_gitsource_admin(self):
+        from inventory.admin import GitSourceAdmin
+        from secretsmanager.admin_integrations import (
+            scan_default,
+            scan_only_verified,
+            scan_with_extra_detectors,
+        )
+
+        actions = GitSourceAdmin.actions or []
+        for action in (scan_default, scan_only_verified, scan_with_extra_detectors):
+            self.assertIn(action, actions)
 
 
 class SkipCascadeFlagIsNotStickyTests(TestCase):

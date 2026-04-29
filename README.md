@@ -1,7 +1,7 @@
-![GitHub Workflow Status (with branch)](https://img.shields.io/github/actions/workflow/status/surface-security/surface/release.yml)
+![GitHub Workflow Status (with branch)](https://img.shields.io/github/actions/workflow/status/lemosdsec/surface/release.yml)
 ![Python](https://img.shields.io/badge/python-%3E%3D3.8%2C%3C=3.11-blue)
 ![Django](https://img.shields.io/badge/Django-%3E%3D4.2%2C%3C%3D5.2.8-blue)
-![Codecov](https://img.shields.io/codecov/c/github/surface-security/surface)
+![Codecov](https://img.shields.io/codecov/c/github/lemosdsec/surface)
 
 # Surface
 
@@ -30,12 +30,12 @@ The platform is a collection of cooperating Django apps. Everything is managed t
 - **Asset tracking** — track people, teams, applications, repositories, DNS/IPs in one place.
 - **SCA** — import CycloneDX SBOMs, match against OSV.dev vulns, check End-of-Life status, and raise pull requests via Renovate. See [`demo/sca_demo.md`](demo/sca_demo.md).
 - **Secret scanning** (`secretsmanager`):
-  - `scan_repo_secrets --repo …` → clones the repo, runs TruffleHog, ingests results, deletes the clone.
+  - `scan_repo_secrets --repo …` → clones the repo, runs TruffleHog, ingests results, deletes the clone. Add `--sensitive-files` to also walk git history for known-sensitive filenames (`.env`, `.pem`, `.pfx`, `.keystore`, …) on the same clone.
   - `import_secrets <file.ndjson>` → load pre-generated TruffleHog output.
-  - `import_git_secrets <path>` → scan git history for known-sensitive filenames (`.env`, `.pem`, `.pfx`, `.keystore`, …).
+  - `scan_repo_secrets --path <dir> --import-git-history` → local git-history scan only (no Trufflehog). Use `--path … --sensitive-files` for Trufflehog **and** that walk; add `--org` when there is no `origin` remote.
   - REST API at `/secretsmanager/v1/…` for `curl`-style uploads and remote-trigger scans.
   - `Secret` ↔ `SecretLocation` with automatic state cascading (FP / Risk Accepted / Fixed propagates both ways).
-  - Verified secrets auto-triage to `TRIAGED`; human state changes are never overridden on re-scan.
+  - Verified secrets skip `NEW` and land in `OPEN`; human state changes are never overridden on re-scan.
   - See [`demo/secrets_demo.md`](demo/secrets_demo.md).
 - **Scanner infrastructure** — pluggable Docker-based scanners (`httpx`, `nmap`, `example`, and your own) dispatched across one or more rootboxes.
 
@@ -141,7 +141,7 @@ python manage.py scan_repo_secrets --repo https://github.com/owner/repo
 python manage.py scan_repo_secrets --repo …  --only-verified          # high-signal only
 python manage.py scan_repo_secrets --repo …  --extra-detectors        # include bundled detectors
 python manage.py import_secrets /path/to/trufflehog-output.ndjson
-python manage.py import_git_secrets /path/to/local/checkout --org myorg
+python manage.py scan_repo_secrets --path /path/to/local/checkout --import-git-history --org myorg
 
 # Scanner orchestration
 python manage.py run_scanner <name>
