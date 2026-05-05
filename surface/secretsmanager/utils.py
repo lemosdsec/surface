@@ -250,9 +250,24 @@ def _upsert_secret_and_location(parsed: dict[str, Any], stats: ImportStats) -> b
         r = strip_git_suffix(repository)
         if _prior_location_sealed_triage(r, parsed["file_path"], parsed["commit"], parsed["line"]):
             stats.skipped += 1
+            logger.info(
+                "skipped trufflehog hit (sealed triage): repo=%s file=%s commit=%s line=%s",
+                r,
+                parsed["file_path"],
+                parsed["commit"],
+                parsed["line"],
+            )
             return False
     if _trufflehog_raw_is_placeholder_noise(parsed.get("secret") or "", parsed.get("file_path") or ""):
         stats.skipped += 1
+        raw_preview = (parsed.get("secret") or "").strip().replace("\n", " ")
+        logger.info(
+            "skipped trufflehog hit (placeholder noise): repo=%s file=%s line=%s raw=%r",
+            repository or "(none)",
+            parsed.get("file_path") or "(none)",
+            parsed.get("line") or "?",
+            raw_preview[:80],
+        )
         return False
 
     git_source = upsert_git_source(repository) if repository else None
@@ -383,6 +398,11 @@ def ingest_trufflehog_stream(
         parsed = parse_trufflehog_record(record, repo_override=repo_override)
         if parsed is None:
             stats.skipped += 1
+            logger.info(
+                "skipped trufflehog hit (unparseable / no Raw value): detector=%s source=%s",
+                record.get("DetectorName") or "?",
+                record.get("SourceName") or "?",
+            )
             continue
 
         try:

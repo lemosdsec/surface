@@ -27,9 +27,13 @@ class Command(LogBaseCommand):
             "--branch", default=None, help="Branch to clone (defaults to repo default); ignored with --path"
         )
         parser.add_argument(
-            "--full",
+            "--shallow",
             action="store_true",
-            help="Clone the full history instead of a shallow clone (slower); ignored with --path",
+            help=(
+                "Opt into a `git clone --depth 1` clone (HEAD only — much faster but "
+                "trufflehog will NOT see past commits). Default is a full clone so the "
+                "scan covers complete git history. Ignored with --path."
+            ),
         )
         parser.add_argument(
             "--keep",
@@ -86,7 +90,7 @@ class Command(LogBaseCommand):
             repo=options.get("repo"),
             local_path=options.get("local_path"),
             branch=options["branch"],
-            shallow=not options["full"],
+            shallow=options["shallow"],
             keep=options["keep"],
             only_verified=options["only_verified"],
             extra_detectors=options["extra_detectors"],

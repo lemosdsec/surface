@@ -109,7 +109,7 @@ class SecretAdmin(DefaultModelAdmin):
         "repository_links",
         "last_seen",
     ]
-    list_filter = [ActiveFilter, "source", "verified", "state", "git_source__repo_url"]
+    list_filter = [ActiveFilter, "source", "kind", "verified", "state", "git_source__repo_url"]
     search_fields = ["secret_hash", "kind", "git_source__repo_url", "environment", "secret"]
     readonly_fields = [
         "secret_hash",
@@ -262,7 +262,7 @@ class SecretLocationAdmin(DefaultModelAdmin):
         "active",
         "timestamp",
     ]
-    list_filter = [ActiveFilter, "state", "repository", "secret__source", "secret__verified"]
+    list_filter = [ActiveFilter, "state", "repository", "secret__source", "secret__kind", "secret__verified"]
     search_fields = [
         "file_path",
         "commit",
@@ -333,7 +333,13 @@ class SecretFindingAdmin(DefaultModelAdmin):
         "first_seen",
         "last_seen_date",
     ]
-    list_filter = ["severity", "state", "secret_location__secret__source", "secret_location__secret__verified"]
+    list_filter = [
+        "severity",
+        "state",
+        "secret_location__secret__source",
+        "secret_location__secret__kind",
+        "secret_location__secret__verified",
+    ]
     search_fields = [
         "title",
         "summary",

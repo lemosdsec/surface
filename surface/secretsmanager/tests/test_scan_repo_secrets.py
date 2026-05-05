@@ -39,11 +39,12 @@ class ScanRepoTests(TestCase):
             mocked_run.return_value = mock.Mock(returncode=0, stdout=b"", stderr=b"")
             mocked_popen.return_value = FakeProc(TRUFFLEHOG_NDJSON)
 
-            result = scanner.scan_repo(repo="https://github.com/lemosdsec/wmata-trains")
+            result = scanner.scan_repo(repo="https://github.com/lemosdsec/wmata-trains", shallow=True)
 
         self.assertEqual(mocked_run.call_count, 1)
         clone_cmd = mocked_run.call_args.args[0]
         self.assertIn("clone", clone_cmd)
+        # `shallow=True` (legacy default behaviour) still maps to `--depth 1`.
         self.assertIn("--depth", clone_cmd)
 
         trufflehog_cmd = mocked_popen.call_args.args[0]
@@ -332,9 +333,10 @@ class SensitiveFilesScanTests(TestCase):
 
         mocked_ingest.assert_not_called()
         self.assertFalse(result.sensitive_files)
-        # Default clone is still shallow when sensitive_files is off.
+        # Default is now a full clone (full git history). Shallow is opt-in
+        # via `--shallow` on the CLI / `shallow=True` on `scan_repo`.
         clone_cmd = mocked_run.call_args.args[0]
-        self.assertIn("--depth", clone_cmd)
+        self.assertNotIn("--depth", clone_cmd)
 
     def test_stats_from_both_passes_are_merged(self):
         from secretsmanager.utils import ImportStats

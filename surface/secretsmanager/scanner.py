@@ -136,7 +136,7 @@ def scan_repo(
     repo: Optional[str] = None,
     local_path: Optional[str] = None,
     branch: Optional[str] = None,
-    shallow: bool = True,
+    shallow: bool = False,
     keep: bool = False,
     only_verified: bool = False,
     extra_detectors: bool = False,
@@ -150,7 +150,11 @@ def scan_repo(
     Exactly one of `repo` or `local_path` must be set.
 
     Remote mode: clone into a temp directory, run trufflehog, optionally
-    sensitive-files ingest, delete temp dir unless ``keep=True``.
+    sensitive-files ingest, delete temp dir unless ``keep=True``. The default
+    is a **full clone** (full git history) so trufflehog and the
+    sensitive-files walk can see every commit; pass ``shallow=True`` to opt
+    into a single-commit `--depth 1` clone for speed (HEAD only — past commits
+    will not be scanned).
 
     Local mode: run trufflehog against ``local_path`` directly (same pattern as
     ``trufflehog git file:///path/to/repo`` from the docs — Surface runs from
@@ -261,6 +265,8 @@ def scan_repo(
     if sensitive_files and shallow:
         logger.info("sensitive-files scan requested -> forcing full clone (shallow disabled)")
         effective_shallow = False
+    if not effective_shallow:
+        logger.info("full clone requested -> trufflehog will see complete git history")
 
     with _workdir(keep) as workdir:
         _git_clone(repo, branch, workdir, effective_shallow)

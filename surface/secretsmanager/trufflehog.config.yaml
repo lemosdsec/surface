@@ -28,7 +28,10 @@ detectors:
 
   - name: jdbc_connection_string
     keywords:
-      - jdbc:
+      # Quoted: bare `jdbc:` is parsed by YAML as a mapping ({jdbc: null}),
+      # which trufflehog's protobuf loader rejects with
+      # `invalid value for string field keywords: {`.
+      - "jdbc:"
     regex:
       jdbc_url: "(?i)\\b(jdbc:[a-z0-9]+://[^\\s'\";>]+)"
 

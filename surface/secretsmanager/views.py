@@ -116,9 +116,19 @@ def scan(request: HttpRequest) -> JsonResponse:
     if not repo and not local_path:
         return JsonResponse({"error": "Provide `repo` (URL to clone) or `path` (local checkout)"}, status=400)
 
+    # Default is a full clone (full git history). Accept either `shallow=True`
+    # for the new opt-in shallow behaviour, or the legacy `full=True` body
+    # field which used to mean "opt out of the old shallow default".
+    if "shallow" in body:
+        shallow_flag = bool(body.get("shallow"))
+    elif "full" in body:
+        shallow_flag = not bool(body.get("full"))
+    else:
+        shallow_flag = False
+
     scan_kwargs = dict(
         branch=body.get("branch"),
-        shallow=not bool(body.get("full")),
+        shallow=shallow_flag,
         keep=bool(body.get("keep")),
         only_verified=bool(body.get("only_verified")),
         extra_detectors=bool(body.get("extra_detectors")),

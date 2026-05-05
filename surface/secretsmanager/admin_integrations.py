@@ -36,8 +36,25 @@ def _resolve_branch(gs: GitSource):
     return branch
 
 
-def _run_scans(request, queryset, *, only_verified: bool = False, extra_detectors: bool = False) -> None:
-    """Shared body for the three admin actions below."""
+def _run_scans(
+    request,
+    queryset,
+    *,
+    only_verified: bool = False,
+    extra_detectors: bool = False,
+    sensitive_files: bool = False,
+) -> None:
+    """Shared body for the admin actions below.
+
+    ``sensitive_files=True`` walks the cloned repo's git history for
+    known-sensitive filenames (`.env`, `.pem`, `.keystore`, …) on top of
+    trufflehog. ``scan_repo`` automatically forces a full clone in that mode,
+    so admin scans pick up secrets buried in old commits — the closest
+    equivalent of the CLI's ``--sensitive-files`` / ``--import-git-history``
+    flows for a remote repository (the ``--import-git-history`` "no
+    trufflehog, history only" mode requires a local ``--path`` and so cannot
+    be triggered from the admin).
+    """
     total = queryset.count()
     if total == 0:
         messages.warning(request, "No Git sources selected.")
@@ -55,6 +72,8 @@ def _run_scans(request, queryset, *, only_verified: bool = False, extra_detector
         mode_bits.append("only-verified")
     if extra_detectors:
         mode_bits.append("extra-detectors")
+    if sensitive_files:
+        mode_bits.append("sensitive-files (git history)")
     mode_label = ", ".join(mode_bits) or "default detectors"
 
     successes: list[str] = []
@@ -70,11 +89,13 @@ def _run_scans(request, queryset, *, only_verified: bool = False, extra_detector
                 branch=_resolve_branch(gs),
                 only_verified=only_verified,
                 extra_detectors=extra_detectors,
+                sensitive_files=sensitive_files,
             )
             stats = result.stats
             successes.append(
                 f"{gs.repo_url}: processed={stats.processed} "
-                f"new_secrets={stats.new_secrets} new_locations={stats.new_locations}"
+                f"new_secrets={stats.new_secrets} new_locations={stats.new_locations} "
+                f"skipped={stats.skipped} errors={stats.errors}"
             )
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("admin-triggered scan failed for %s", gs.repo_url)
@@ -104,10 +125,26 @@ def scan_with_extra_detectors(modeladmin, request, queryset):
     _run_scans(request, queryset, extra_detectors=True)
 
 
+@admin.action(description="Scan for secrets — git history (sensitive files, full clone)")
+def scan_with_git_history(modeladmin, request, queryset):
+    _run_scans(request, queryset, sensitive_files=True)
+
+
+@admin.action(description="Scan for secrets — extra detectors + git history (full clone)")
+def scan_with_extra_detectors_and_git_history(modeladmin, request, queryset):
+    _run_scans(request, queryset, extra_detectors=True, sensitive_files=True)
+
+
 def register_gitsource_actions() -> None:
-    """Idempotently append our three scan actions onto inventory's GitSourceAdmin."""
+    """Idempotently append our scan actions onto inventory's GitSourceAdmin."""
     existing = list(GitSourceAdmin.actions or [])
-    for action in (scan_default, scan_only_verified, scan_with_extra_detectors):
+    for action in (
+        scan_default,
+        scan_only_verified,
+        scan_with_extra_detectors,
+        scan_with_git_history,
+        scan_with_extra_detectors_and_git_history,
+    ):
         if action not in existing:
             existing.append(action)
     GitSourceAdmin.actions = existing

@@ -72,7 +72,9 @@ class ScanApiTests(TestCase):
         kwargs = mocked.call_args.kwargs
         self.assertEqual(kwargs["repo"], "https://github.com/fake/repo")
         self.assertEqual(kwargs["branch"], "main")
-        self.assertTrue(kwargs["shallow"])
+        # Default is now a full clone (full git history); callers must
+        # explicitly request shallow with `{"shallow": true}`.
+        self.assertFalse(kwargs["shallow"])
         self.assertFalse(kwargs["only_verified"])
         self.assertFalse(kwargs["extra_detectors"])
         self.assertFalse(kwargs["sensitive_files"])
