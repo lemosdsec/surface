@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -100,13 +101,14 @@ class Command(LogBaseCommand):
         docker_image = settings.SCA_INTERNAL_RENOVATE if settings.SCA_INTERNAL_RENOVATE else "renovate/renovate"
 
         _env = {
+            **os.environ,
             "RENOVATE_TOKEN": token,
             "RENOVATE_PLATFORM": platform,
             "RENOVATE_ENDPOINT": endpoint,
         }
         if is_local:
             docker_temp_config_path = Path("/usr/src/app") / Path(temp_config_path).name
-            _env["RENOVATE_CONFIG_FILE"] = docker_temp_config_path
+            _env["RENOVATE_CONFIG_FILE"] = str(docker_temp_config_path)
             _env["LOG_LEVEL"] = "debug"
             command = (
                 f"docker run --rm -v {Path.cwd()}:/usr/src/app "
@@ -123,11 +125,21 @@ class Command(LogBaseCommand):
 
         try:
             result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True, env=_env)
+            _cap = 4000
             if result.stdout:
-                self.log("Docker output: %s", result.stdout)
+                out = result.stdout if len(result.stdout) <= _cap else result.stdout[:_cap] + "… [truncated]"
+                self.log("Docker output: %s", out)
             if result.stderr:
-                self.log_error("Docker error: %s", result.stderr)
+                err = result.stderr if len(result.stderr) <= _cap else result.stderr[:_cap] + "… [truncated]"
+                self.log_error("Docker stderr: %s", err)
         except subprocess.CalledProcessError as ex:
-            self.log_exception("Failed to execute Docker command: %s", ex.output)
+            # Keep logs short: Renovate DEBUG fills stderr; surface.command should not dump it all.
+            blob = ((ex.stderr or "") + "\n" + (ex.stdout or "")).strip()
+            lines = [ln.strip() for ln in blob.splitlines() if ln.strip()]
+            summary = next(
+                (ln for ln in reversed(lines) if any(k in ln for k in ("FATAL:", "ERROR:", "401", "Bad credentials"))),
+                lines[-1] if lines else str(ex),
+            )
+            self.log_error("Renovate docker failed (exit %s): %s", ex.returncode, summary[:500])
             return False
         return True
