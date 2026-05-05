@@ -320,6 +320,10 @@ class SecretFindingAdmin(DefaultModelAdmin):
     `SecretLocation._sync_finding()` every time the location is saved.
     """
 
+    # Required by `vulns.FindingAdmin.has_delete_permission` when deleting via
+    # the global Finding admin (same pattern as `sca.SCAFindingAdmin`).
+    ALLOW_DELETE = True
+
     list_display = [
         "id",
         "title",
